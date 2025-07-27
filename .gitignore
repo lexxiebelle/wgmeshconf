@@ -7,7 +7,7 @@ build/
 configs/
 config.yaml
 wgmeshconf.db
-wgmeshconf
+/wgmeshconf
 test_*
 *.yaml
 

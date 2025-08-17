@@ -24,6 +24,7 @@ type Cluster struct {
 	PortsRange               string `yaml:"portsRange,omitempty"`    // e.g., "20000-21000"
 	PortsAllocate            string `yaml:"portsAllocate,omitempty"` // "linear" or "random", default "random"
 	RemoveLocalIPFromAllowed bool   `yaml:"removeLocalIPFromAllowed,omitempty"`
+	RemoveRoutes             bool   `yaml:"removeRoutes,omitempty"`
 	PersistentKeepalive      int    `yaml:"persistentKeepalive,omitempty"`
 	Nodes                    []Node `yaml:"nodes"`
 }
@@ -69,6 +70,7 @@ func CreateSample(path string) error {
 		mode: ptp
 		cidr: 172.16.20.0/24
 		removeLocalIPFromAllowed: false
+		removeRoutes: false
 		nodes:
 		  - name: node1
 			endpoint: 1.2.3.4

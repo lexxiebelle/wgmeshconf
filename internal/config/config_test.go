@@ -11,7 +11,8 @@ func TestLoad(t *testing.T) {
   - name: example
     mode: ptp
     cidr: 172.16.20.0/24
-    removePeerFromAllowed: false
+    removeLocalIPFromAllowed: false
+    removeRoutes: false
     nodes:
       - name: node1
         endpoint: 1.2.3.4

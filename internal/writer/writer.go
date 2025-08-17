@@ -31,6 +31,9 @@ func GenerateConfigs(clusters []db.Cluster) (map[string][]byte, error) {
 				fmt.Fprintf(&buf, "Address = %s/%s\n", node.Address, mask)
 				fmt.Fprintf(&buf, "ListenPort = %d\n", node.Port)
 				fmt.Fprintf(&buf, "PrivateKey = %s\n\n", node.PrivKey)
+				if cl.RemoveRoutes {
+					fmt.Fprintf(&buf, "Table = off\n")
+				}
 
 				// all other nodes are peers
 				for _, peer := range cl.Nodes {
@@ -90,7 +93,10 @@ func GenerateConfigs(clusters []db.Cluster) (map[string][]byte, error) {
 				fmt.Fprintln(&buf, "[Interface]")
 				fmt.Fprintf(&buf, "Address = %s/31\n", t.InterfaceIP)
 				fmt.Fprintf(&buf, "ListenPort = %d\n", t.Port)
-				fmt.Fprintf(&buf, "PrivateKey = %s\n\n", t.PrivKey)
+				fmt.Fprintf(&buf, "PrivateKey = %s\n", t.PrivKey)
+				if cl.RemoveRoutes {
+					fmt.Fprintf(&buf, "Table = off\n\n")
+				}
 
 				// [Peer]
 				fmt.Fprintf(&buf, "# %s\n", to.Name)

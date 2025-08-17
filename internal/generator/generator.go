@@ -23,6 +23,7 @@ type GeneratedCluster struct {
 	PortsRange               string
 	PortsAllocate            string
 	RemoveLocalIPFromAllowed bool
+	RemoveRoutes             bool
 	PersistentKeepalive      int
 	Nodes                    []GeneratedNode
 	Tunnels                  []GeneratedTunnel // for ptp
@@ -71,6 +72,7 @@ func Generate(cfg *config.Config, existing []db.Cluster) (*GeneratedConfig, erro
 			PortsRange:               cl.PortsRange,
 			PortsAllocate:            cl.PortsAllocate,
 			RemoveLocalIPFromAllowed: cl.RemoveLocalIPFromAllowed,
+			RemoveRoutes:             cl.RemoveRoutes,
 		}
 		dbC, hasDB := existingByCluster[cl.Name]
 

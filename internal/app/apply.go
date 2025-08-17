@@ -68,14 +68,15 @@ func (a *App) applyCommand() error {
 			if dbC.Mode != genC.Mode || dbC.CIDR != genC.CIDR {
 				tx.Rollback()
 				return fmt.Errorf(
-					"cluster %q: only PortsRange, PortsAllocate and RemoveLocalIPFromAllowed can be changed; mode/CIDR require recreate or cleanup",
+					"cluster %q: only PortsRange, PortsAllocate, RemoveRoutes and RemoveLocalIPFromAllowed can be changed; mode/CIDR require recreate or cleanup",
 					name,
 				)
 			}
 			if dbC.PortsRange != cfg.PortsRange ||
 				dbC.PortsAllocate != cfg.PortsAllocate ||
 				dbC.PersistentKeepalive != cfg.PersistentKeepalive ||
-				dbC.RemoveLocalIPFromAllowed != cfg.RemoveLocalIPFromAllowed {
+				dbC.RemoveLocalIPFromAllowed != cfg.RemoveLocalIPFromAllowed ||
+				dbC.RemoveRoutes != cfg.RemoveRoutes {
 				toUpdateC = append(toUpdateC, genC)
 			}
 		}
@@ -124,6 +125,7 @@ func (a *App) applyCommand() error {
 			PortsRange:               cfg.PortsRange,
 			PortsAllocate:            cfg.PortsAllocate,
 			RemoveLocalIPFromAllowed: cfg.RemoveLocalIPFromAllowed,
+			RemoveRoutes:             cfg.RemoveRoutes,
 			PersistentKeepalive:      cfg.PersistentKeepalive,
 			CreatedAt:                time.Now(),
 			UpdatedAt:                time.Now(),
@@ -139,12 +141,13 @@ func (a *App) applyCommand() error {
 			PortsRange:               cfg.PortsRange,
 			PortsAllocate:            cfg.PortsAllocate,
 			RemoveLocalIPFromAllowed: cfg.RemoveLocalIPFromAllowed,
+			RemoveRoutes:             cfg.RemoveRoutes,
 			PersistentKeepalive:      cfg.PersistentKeepalive,
 			UpdatedAt:                time.Now(),
 		}
 		if err := tx.Model(&db.Cluster{}).
 			Where("name = ?", genC.Name).
-			Select("ports_range", "ports_allocate", "remove_local_ip_from_allowed", "persistent_keepalive", "updated_at").
+			Select("ports_range", "ports_allocate", "remove_local_ip_from_allowed", "remove_routes", "persistent_keepalive", "updated_at").
 			Updates(upd).Error; err != nil {
 			tx.Rollback()
 			return fmt.Errorf("update cluster %s: %w", genC.Name, err)

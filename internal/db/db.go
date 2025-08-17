@@ -23,6 +23,7 @@ type Cluster struct {
 	PortsRange               string `gorm:"not null"`
 	PortsAllocate            string `gorm:"not null"` // linear | random
 	RemoveLocalIPFromAllowed bool   `gorm:"default:false"`
+	RemoveRoutes             bool   `gorm:"default:false"`
 	PersistentKeepalive      int    `gorm:"default:0"`
 	CreatedAt, UpdatedAt     time.Time
 	Nodes                    []Node   `gorm:"constraint:OnDelete:CASCADE;"`

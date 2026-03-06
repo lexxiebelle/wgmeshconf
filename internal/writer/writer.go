@@ -30,9 +30,9 @@ func GenerateConfigs(clusters []db.Cluster) (map[string][]byte, error) {
 				mask := strings.SplitN(cl.CIDR, "/", 2)[1]
 				fmt.Fprintf(&buf, "Address = %s/%s\n", node.Address, mask)
 				fmt.Fprintf(&buf, "ListenPort = %d\n", node.Port)
-				fmt.Fprintf(&buf, "PrivateKey = %s\n\n", node.PrivKey)
+				fmt.Fprintf(&buf, "PrivateKey = %s\n", node.PrivKey)
 				if cl.RemoveRoutes {
-					fmt.Fprintf(&buf, "Table = off\n")
+					fmt.Fprintf(&buf, "Table = off\n\n")
 				}
 
 				// all other nodes are peers

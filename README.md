@@ -57,7 +57,8 @@ clusters:
   - name: example
     mode: ptp                    # or "network"
     cidr: 172.16.20.0/24
-    removePeerFromAllowed: false
+    removeLocalIPFromAllowed: false
+    removeRoutes: false
     # persistentKeepalive: 25
     nodes:
       - name: node1
@@ -83,7 +84,8 @@ clusters:
 | `cidr` | string | Yes | IP range for tunnel allocation (e.g., `172.16.20.0/24`) |
 | `portsRange` | string | No | Port range for dynamic allocation (e.g., `20000-22000`, default: `20000-22000`) |
 | `portsAllocate` | string | No | Port allocation strategy: `linear` or `random` (default: `random`) |
-| `removePeerFromAllowed` | boolean | No | Remove peer IP from AllowedIPs (default: false) |
+| `removeLocalIPFromAllowed` | boolean | No | Do not append generated local tunnel/interface IP to `AllowedIPs` (default: false) |
+| `removeRoutes` | boolean | No | Add `Table = off` to `[Interface]` blocks (default: false) |
 | `persistentKeepalive` | int | No | PersistentKeepalive peer option (default: 0) |
 | `nodes` | array | Yes | Array of node configurations |
 
@@ -93,10 +95,10 @@ clusters:
 |-----------|------|----------|-------------|
 | `name` | string | Yes | Unique node identifier within cluster |
 | `endpoint` | string | Yes | Public IP address or hostname |
-| `port` | integer | No | WireGuard port (if omitted, will be allocated dynamically) |
+| `port` | integer | No | In `network`: fixed ListenPort for this node; in `ptp` ignored for new tunnels |
 | `allowedIps` | array | Yes | IP ranges this node can route |
-| `excludePeers` | array | No | Nodes to exclude from peer list |
-| `bindAddress` | string | No | Interface bind address (e.g., "172.16.20.100") (only in network mode) |
+| `excludePeers` | array | No | In `ptp`: excludes tunnel pairs; in `network`: currently ignored |
+| `bindAddress` | string | No | Interface address override in `network` (e.g., "172.16.20.100") |
 
 ## Modes
 
@@ -145,9 +147,9 @@ In Network mode, each node gets a single configuration file with all peers.
 ```
 configs/
 ├── example/
-│   ├── node1.conf
-│   ├── node2.conf
-│   └── node3.conf
+│   ├── tun_node1.conf
+│   ├── tun_node2.conf
+│   └── tun_node3.conf
 ```
 
 ## Commands
@@ -227,7 +229,7 @@ The tool includes a comprehensive backup system that automatically creates backu
 
 ### Features
 
-- **Automatic Backups**: Created after successful `apply` operations
+- **Automatic Backups**: Created during `apply` before DB changes are committed
 - **Manual Backups**: Created via `backup` command
 - **Automatic Cleanup**: Keeps only the last 10 backups
 - **Metadata Storage**: Backup information including timestamps and sizes
@@ -281,7 +283,7 @@ clusters:
         allowedIps: [10.0.3.0/24]
 ```
 
-### Network Mode with Exclusions
+### Network Mode Example
 
 ```yaml
 clusters:
@@ -289,7 +291,7 @@ clusters:
     mode: network
     cidr: 172.16.20.0/24
     portsAllocate: linear
-    removePeerFromAllowed: true
+    removeLocalIPFromAllowed: true
     nodes:
       - name: gateway
         endpoint: 203.0.113.10
@@ -300,12 +302,10 @@ clusters:
         endpoint: 203.0.113.11
         port: 20234
         allowedIps: [10.0.1.0/24]
-        excludePeers: [client2]
       - name: client2
         endpoint: 203.0.113.12
         port: 20237
         allowedIps: [10.0.2.0/24]
-        excludePeers: [client1]
 ```
 
 ### Multiple Clusters

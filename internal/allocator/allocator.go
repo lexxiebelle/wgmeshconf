@@ -66,6 +66,14 @@ func NewIPAllocator(cidr string, existing []string) (*IPAllocator, error) {
 		// if in range, mark allocated
 		if o < size {
 			a.allocated1[o] = true
+			// Reserve the whole /31 pair containing this address.
+			// This prevents AllocatePair() from reusing a pair that was
+			// already used by existing ptp tunnels.
+			pairStart := o
+			if pairStart%2 == 1 {
+				pairStart--
+			}
+			a.allocated2[pairStart] = true
 		}
 	}
 

@@ -3,11 +3,103 @@ package generator
 import (
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/lexxiebelle/wgmeshconf/internal/config"
 	"github.com/lexxiebelle/wgmeshconf/internal/db"
 )
+
+func hasDupStrings(ss []string) bool {
+	seen := make(map[string]struct{}, len(ss))
+	for _, s := range ss {
+		if _, ok := seen[s]; ok {
+			return true
+		}
+		seen[s] = struct{}{}
+	}
+	return false
+}
+
+func toDBClusterFromGeneratedNetwork(name, cidr, portsRange, portsAllocate string, nodes []GeneratedNode) db.Cluster {
+	out := db.Cluster{
+		Name:          name,
+		Mode:          "network",
+		CIDR:          cidr,
+		PortsRange:    portsRange,
+		PortsAllocate: portsAllocate,
+	}
+	for i, n := range nodes {
+		out.Nodes = append(out.Nodes, db.Node{
+			ID:         uint(i + 1),
+			ClusterID:  1,
+			Name:       n.Name,
+			Endpoint:   n.Endpoint,
+			Address:    n.Address.String(),
+			Port:       n.Port,
+			PrivKey:    n.PrivKey,
+			PubKey:     n.PubKey,
+			AllowedIPs: append([]string{}, n.AllowedIPs...),
+		})
+	}
+	return out
+}
+
+func toDBClusterFromGeneratedPTP(name, cidr, portsRange, portsAllocate string, nodes []GeneratedNode, tunnels []GeneratedTunnel) db.Cluster {
+	out := db.Cluster{
+		Name:          name,
+		Mode:          "ptp",
+		CIDR:          cidr,
+		PortsRange:    portsRange,
+		PortsAllocate: portsAllocate,
+	}
+
+	nodeIDByName := make(map[string]uint, len(nodes))
+	for i, n := range nodes {
+		id := uint(i + 1)
+		nodeIDByName[n.Name] = id
+		out.Nodes = append(out.Nodes, db.Node{
+			ID:         id,
+			ClusterID:  1,
+			Name:       n.Name,
+			Endpoint:   n.Endpoint,
+			AllowedIPs: append([]string{}, n.AllowedIPs...),
+		})
+	}
+
+	for _, t := range tunnels {
+		out.Tunnels = append(out.Tunnels, db.Tunnel{
+			ClusterID:   1,
+			FromNodeID:  nodeIDByName[t.From],
+			ToNodeID:    nodeIDByName[t.To],
+			InterfaceIP: t.InterfaceIP.String(),
+			PeerIP:      t.PeerIP.String(),
+			Port:        t.Port,
+			PeerPort:    t.PeerPort,
+			PrivKey:     t.PrivKey,
+			PubKey:      t.PubKey,
+			PeerPubKey:  t.PeerPubKey,
+		})
+	}
+
+	return out
+}
+
+func mapGeneratedNodesByName(nodes []GeneratedNode) map[string]GeneratedNode {
+	out := make(map[string]GeneratedNode, len(nodes))
+	for _, n := range nodes {
+		out[n.Name] = n
+	}
+	return out
+}
+
+func mapGeneratedTunnelsByPair(tunnels []GeneratedTunnel) map[string]GeneratedTunnel {
+	out := make(map[string]GeneratedTunnel, len(tunnels))
+	for _, t := range tunnels {
+		out[t.From+">"+t.To] = t
+	}
+	return out
+}
 
 // TestGenerateNetworkThreeNodes asserts correct generation in network mode for three nodes
 func TestGenerateNetworkThreeNodes(t *testing.T) {
@@ -201,6 +293,64 @@ func TestGenerateNetworkReuse(t *testing.T) {
 	}
 }
 
+func TestGenerateNetworkDuplicateStaticPortsError(t *testing.T) {
+	cfg := &config.Config{
+		Clusters: []config.Cluster{{
+			Name:          "net-dup-port",
+			Mode:          "network",
+			CIDR:          "10.1.0.0/29",
+			PortsRange:    "20000-20010",
+			PortsAllocate: "linear",
+			Nodes: []config.Node{
+				{Name: "a", Endpoint: "1.1.1.1", Port: 20001},
+				{Name: "b", Endpoint: "2.2.2.2", Port: 20001},
+			},
+		}},
+	}
+
+	_, err := Generate(cfg, nil)
+	if err == nil {
+		t.Fatal("expected duplicate static port error, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate static port") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGenerateNetworkStaticPortReservedFromPoolOnFirstGeneration(t *testing.T) {
+	cfg := &config.Config{
+		Clusters: []config.Cluster{{
+			Name:          "net-static-reserve",
+			Mode:          "network",
+			CIDR:          "10.66.0.0/29",
+			PortsRange:    "24000-24002",
+			PortsAllocate: "linear",
+			Nodes: []config.Node{
+				{Name: "a", Endpoint: "1.1.1.1", Port: 24001},
+				{Name: "b", Endpoint: "2.2.2.2"},
+				{Name: "c", Endpoint: "3.3.3.3"},
+			},
+		}},
+	}
+
+	gen, err := Generate(cfg, nil)
+	if err != nil {
+		t.Fatalf("Generate error: %v", err)
+	}
+	c := gen.Clusters[0]
+	byName := mapGeneratedNodesByName(c.Nodes)
+
+	if byName["a"].Port != 24001 {
+		t.Fatalf("node a static port = %d; want 24001", byName["a"].Port)
+	}
+	if byName["b"].Port == 24001 || byName["c"].Port == 24001 {
+		t.Fatalf("allocator reused static port 24001: b=%d c=%d", byName["b"].Port, byName["c"].Port)
+	}
+	if byName["b"].Port == byName["c"].Port {
+		t.Fatalf("auto-allocated ports must differ: b=%d c=%d", byName["b"].Port, byName["c"].Port)
+	}
+}
+
 // TestGeneratePTPReuse verifies that existing tunnels are reused and new ones
 // are created only for missing pairs.
 func TestGeneratePTPReuse(t *testing.T) {
@@ -275,5 +425,271 @@ func TestGeneratePTPReuse(t *testing.T) {
 	}
 	if reused.PubKey != "pubXY" || reused.PeerPubKey != "pubYX" {
 		t.Errorf("Reused keys = %s/%s; want pubXY/pubYX", reused.PubKey, reused.PeerPubKey)
+	}
+}
+
+// TestGeneratePTPAddNodeNoAddressOrPortCollisions verifies that when new
+// nodes are added to an existing ptp cluster, newly allocated tunnel IPs/ports
+// do not collide with already persisted tunnel values.
+func TestGeneratePTPAddNodeNoAddressOrPortCollisions(t *testing.T) {
+	cfg := &config.Config{
+		Clusters: []config.Cluster{{
+			Name:          "ptp3",
+			Mode:          "ptp",
+			CIDR:          "10.2.0.0/24",
+			PortsRange:    "30000-30050",
+			PortsAllocate: "linear",
+			Nodes: []config.Node{
+				{Name: "x", Endpoint: "1.1.1.1"},
+				{Name: "y", Endpoint: "2.2.2.2"},
+				{Name: "z", Endpoint: "3.3.3.3"}, // newly added node
+			},
+		}},
+	}
+
+	// Existing DB state has only x<->y tunnels.
+	existing := []db.Cluster{{
+		Name: "ptp3",
+		Mode: "ptp",
+		CIDR: "10.2.0.0/24",
+		Nodes: []db.Node{
+			{ID: 1, Name: "x", Endpoint: "1.1.1.1"},
+			{ID: 2, Name: "y", Endpoint: "2.2.2.2"},
+		},
+		Tunnels: []db.Tunnel{
+			{
+				FromNodeID: 1, ToNodeID: 2,
+				InterfaceIP: "10.2.0.0", PeerIP: "10.2.0.1",
+				Port: 30000, PeerPort: 30001,
+				PrivKey: "privXY", PubKey: "pubXY", PeerPubKey: "pubYX",
+			},
+			{
+				FromNodeID: 2, ToNodeID: 1,
+				InterfaceIP: "10.2.0.1", PeerIP: "10.2.0.0",
+				Port: 30001, PeerPort: 30000,
+				PrivKey: "privYX", PubKey: "pubYX", PeerPubKey: "pubXY",
+			},
+		},
+	}}
+
+	genCfg, err := Generate(cfg, existing)
+	if err != nil {
+		t.Fatalf("Generate error: %v", err)
+	}
+	c := genCfg.Clusters[0]
+
+	// x-y plus x-z plus y-z, each in both directions => 6 tunnels total
+	if len(c.Tunnels) != 6 {
+		t.Fatalf("len(Tunnels) = %d; want 6", len(c.Tunnels))
+	}
+
+	var allIPs []string
+	var allPorts []string
+	for _, tnl := range c.Tunnels {
+		allIPs = append(allIPs, tnl.InterfaceIP.String())
+		allPorts = append(allPorts, fmt.Sprintf("%d", tnl.Port))
+	}
+	if hasDupStrings(allIPs) {
+		t.Fatalf("duplicate interface IPs found: %v", allIPs)
+	}
+	if hasDupStrings(allPorts) {
+		t.Fatalf("duplicate ports found: %v", allPorts)
+	}
+}
+
+// TestGenerateNetworkAddRemoveKeepsExistingNodeIdentity ensures that in network
+// mode add/remove operations keep address/port/keys stable for remaining nodes.
+func TestGenerateNetworkAddRemoveKeepsExistingNodeIdentity(t *testing.T) {
+	baseCfg := &config.Config{
+		Clusters: []config.Cluster{{
+			Name:          "net-stable",
+			Mode:          "network",
+			CIDR:          "10.44.0.0/24",
+			PortsRange:    "25000-25050",
+			PortsAllocate: "linear",
+			Nodes: []config.Node{
+				{Name: "a", Endpoint: "1.1.1.1", AllowedIPs: []string{"10.10.0.0/16"}},
+				{Name: "b", Endpoint: "2.2.2.2", AllowedIPs: []string{"10.20.0.0/16"}},
+				{Name: "c", Endpoint: "3.3.3.3", AllowedIPs: []string{"10.30.0.0/16"}},
+			},
+		}},
+	}
+
+	gen1, err := Generate(baseCfg, nil)
+	if err != nil {
+		t.Fatalf("Generate(base) error: %v", err)
+	}
+	base := gen1.Clusters[0]
+	existing1 := []db.Cluster{
+		toDBClusterFromGeneratedNetwork(base.Name, base.CIDR, base.PortsRange, base.PortsAllocate, base.Nodes),
+	}
+
+	addCfg := &config.Config{
+		Clusters: []config.Cluster{{
+			Name:          "net-stable",
+			Mode:          "network",
+			CIDR:          "10.44.0.0/24",
+			PortsRange:    "25000-25050",
+			PortsAllocate: "linear",
+			Nodes: []config.Node{
+				{Name: "a", Endpoint: "1.1.1.1", AllowedIPs: []string{"10.10.0.0/16"}},
+				{Name: "b", Endpoint: "2.2.2.2", AllowedIPs: []string{"10.20.0.0/16"}},
+				{Name: "c", Endpoint: "3.3.3.3", AllowedIPs: []string{"10.30.0.0/16"}},
+				{Name: "d", Endpoint: "4.4.4.4", AllowedIPs: []string{"10.40.0.0/16"}},
+				{Name: "e", Endpoint: "5.5.5.5", AllowedIPs: []string{"10.50.0.0/16"}},
+			},
+		}},
+	}
+	gen2, err := Generate(addCfg, existing1)
+	if err != nil {
+		t.Fatalf("Generate(add) error: %v", err)
+	}
+	added := gen2.Clusters[0]
+
+	baseByName := mapGeneratedNodesByName(base.Nodes)
+	addedByName := mapGeneratedNodesByName(added.Nodes)
+	for _, name := range []string{"a", "b", "c"} {
+		bn := baseByName[name]
+		an := addedByName[name]
+		if bn.Address.String() != an.Address.String() || bn.Port != an.Port || bn.PrivKey != an.PrivKey || bn.PubKey != an.PubKey {
+			t.Fatalf("node %s changed after add: before(%s,%d,%s,%s) after(%s,%d,%s,%s)",
+				name, bn.Address.String(), bn.Port, bn.PrivKey, bn.PubKey, an.Address.String(), an.Port, an.PrivKey, an.PubKey)
+		}
+	}
+
+	existing2 := []db.Cluster{
+		toDBClusterFromGeneratedNetwork(added.Name, added.CIDR, added.PortsRange, added.PortsAllocate, added.Nodes),
+	}
+	removeCfg := &config.Config{
+		Clusters: []config.Cluster{{
+			Name:          "net-stable",
+			Mode:          "network",
+			CIDR:          "10.44.0.0/24",
+			PortsRange:    "25000-25050",
+			PortsAllocate: "linear",
+			Nodes: []config.Node{
+				{Name: "a", Endpoint: "1.1.1.1", AllowedIPs: []string{"10.10.0.0/16"}},
+				{Name: "b", Endpoint: "2.2.2.2", AllowedIPs: []string{"10.20.0.0/16"}},
+				{Name: "c", Endpoint: "3.3.3.3", AllowedIPs: []string{"10.30.0.0/16"}},
+				{Name: "d", Endpoint: "4.4.4.4", AllowedIPs: []string{"10.40.0.0/16"}},
+			},
+		}},
+	}
+	gen3, err := Generate(removeCfg, existing2)
+	if err != nil {
+		t.Fatalf("Generate(remove) error: %v", err)
+	}
+	removed := gen3.Clusters[0]
+	removedByName := mapGeneratedNodesByName(removed.Nodes)
+	addedByName = mapGeneratedNodesByName(added.Nodes)
+	for _, name := range []string{"a", "b", "c", "d"} {
+		an := addedByName[name]
+		rn := removedByName[name]
+		if an.Address.String() != rn.Address.String() || an.Port != rn.Port || an.PrivKey != rn.PrivKey || an.PubKey != rn.PubKey {
+			t.Fatalf("node %s changed after remove: before(%s,%d,%s,%s) after(%s,%d,%s,%s)",
+				name, an.Address.String(), an.Port, an.PrivKey, an.PubKey, rn.Address.String(), rn.Port, rn.PrivKey, rn.PubKey)
+		}
+	}
+}
+
+// TestGeneratePTPAddRemoveKeepsExistingTunnelIdentity ensures that in ptp mode
+// add/remove operations keep tunnel IPs/ports/keys stable for remaining pairs.
+func TestGeneratePTPAddRemoveKeepsExistingTunnelIdentity(t *testing.T) {
+	baseCfg := &config.Config{
+		Clusters: []config.Cluster{{
+			Name:          "ptp-stable",
+			Mode:          "ptp",
+			CIDR:          "10.55.0.0/24",
+			PortsRange:    "26000-26100",
+			PortsAllocate: "linear",
+			Nodes: []config.Node{
+				{Name: "x", Endpoint: "1.1.1.1"},
+				{Name: "y", Endpoint: "2.2.2.2"},
+				{Name: "z", Endpoint: "3.3.3.3"},
+			},
+		}},
+	}
+	gen1, err := Generate(baseCfg, nil)
+	if err != nil {
+		t.Fatalf("Generate(base) error: %v", err)
+	}
+	base := gen1.Clusters[0]
+	existing1 := []db.Cluster{
+		toDBClusterFromGeneratedPTP(base.Name, base.CIDR, base.PortsRange, base.PortsAllocate, base.Nodes, base.Tunnels),
+	}
+
+	addCfg := &config.Config{
+		Clusters: []config.Cluster{{
+			Name:          "ptp-stable",
+			Mode:          "ptp",
+			CIDR:          "10.55.0.0/24",
+			PortsRange:    "26000-26100",
+			PortsAllocate: "linear",
+			Nodes: []config.Node{
+				{Name: "x", Endpoint: "1.1.1.1"},
+				{Name: "y", Endpoint: "2.2.2.2"},
+				{Name: "z", Endpoint: "3.3.3.3"},
+				{Name: "w", Endpoint: "4.4.4.4"},
+			},
+		}},
+	}
+	gen2, err := Generate(addCfg, existing1)
+	if err != nil {
+		t.Fatalf("Generate(add) error: %v", err)
+	}
+	added := gen2.Clusters[0]
+
+	baseT := mapGeneratedTunnelsByPair(base.Tunnels)
+	addedT := mapGeneratedTunnelsByPair(added.Tunnels)
+	for _, key := range []string{"x>y", "y>x", "x>z", "z>x", "y>z", "z>y"} {
+		bt := baseT[key]
+		at := addedT[key]
+		if bt.InterfaceIP.String() != at.InterfaceIP.String() ||
+			bt.PeerIP.String() != at.PeerIP.String() ||
+			bt.Port != at.Port ||
+			bt.PeerPort != at.PeerPort ||
+			bt.PrivKey != at.PrivKey ||
+			bt.PubKey != at.PubKey ||
+			bt.PeerPubKey != at.PeerPubKey {
+			t.Fatalf("tunnel %s changed after add", key)
+		}
+	}
+
+	existing2 := []db.Cluster{
+		toDBClusterFromGeneratedPTP(added.Name, added.CIDR, added.PortsRange, added.PortsAllocate, added.Nodes, added.Tunnels),
+	}
+	removeCfg := &config.Config{
+		Clusters: []config.Cluster{{
+			Name:          "ptp-stable",
+			Mode:          "ptp",
+			CIDR:          "10.55.0.0/24",
+			PortsRange:    "26000-26100",
+			PortsAllocate: "linear",
+			Nodes: []config.Node{
+				{Name: "x", Endpoint: "1.1.1.1"},
+				{Name: "y", Endpoint: "2.2.2.2"},
+				{Name: "z", Endpoint: "3.3.3.3"},
+			},
+		}},
+	}
+	gen3, err := Generate(removeCfg, existing2)
+	if err != nil {
+		t.Fatalf("Generate(remove) error: %v", err)
+	}
+	removed := gen3.Clusters[0]
+	removedT := mapGeneratedTunnelsByPair(removed.Tunnels)
+	addedT = mapGeneratedTunnelsByPair(added.Tunnels)
+	for _, key := range []string{"x>y", "y>x", "x>z", "z>x", "y>z", "z>y"} {
+		at := addedT[key]
+		rt := removedT[key]
+		if at.InterfaceIP.String() != rt.InterfaceIP.String() ||
+			at.PeerIP.String() != rt.PeerIP.String() ||
+			at.Port != rt.Port ||
+			at.PeerPort != rt.PeerPort ||
+			at.PrivKey != rt.PrivKey ||
+			at.PubKey != rt.PubKey ||
+			at.PeerPubKey != rt.PeerPubKey {
+			t.Fatalf("tunnel %s changed after remove", key)
+		}
 	}
 }

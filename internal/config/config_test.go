@@ -106,7 +106,7 @@ func TestLoadNetworkConfig(t *testing.T) {
   - name: network_example
     mode: network
     cidr: 172.16.20.0/24
-    removePeerFromAllowed: false
+    removeLocalIPFromAllowed: false
     nodes:
       - name: node1
         endpoint: 1.2.3.4
@@ -155,7 +155,7 @@ func TestValidateConfig(t *testing.T) {
   - name: example
     mode: ptp
     cidr: 172.16.20.0/24
-    removePeerFromAllowed: false
+    removeLocalIPFromAllowed: false
     nodes:
       - name: node1
         endpoint: 1.2.3.4

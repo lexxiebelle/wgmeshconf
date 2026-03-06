@@ -81,8 +81,48 @@ func Generate(cfg *config.Config, existing []db.Cluster) (*GeneratedConfig, erro
 		existingPorts := []int{}
 		if hasDB {
 			for _, dn := range dbC.Nodes {
-				existingAddrs = append(existingAddrs, dn.Address)
-				existingPorts = append(existingPorts, dn.Port)
+				if dn.Address != "" && dn.Address != "<nil>" {
+					existingAddrs = append(existingAddrs, dn.Address)
+				}
+				if dn.Port > 0 {
+					existingPorts = append(existingPorts, dn.Port)
+				}
+			}
+			if cl.Mode == "ptp" {
+				for _, t := range dbC.Tunnels {
+					if t.InterfaceIP != "" {
+						existingAddrs = append(existingAddrs, t.InterfaceIP)
+					}
+					if t.PeerIP != "" {
+						existingAddrs = append(existingAddrs, t.PeerIP)
+					}
+					if t.Port > 0 {
+						existingPorts = append(existingPorts, t.Port)
+					}
+					if t.PeerPort > 0 {
+						existingPorts = append(existingPorts, t.PeerPort)
+					}
+				}
+			}
+		}
+		if cl.Mode == "network" {
+			// Validate static ports in config before generation.
+			// Two different nodes in one network cluster must not share the same fixed port.
+			staticPortOwner := make(map[int]string, len(cl.Nodes))
+			for _, node := range cl.Nodes {
+				if node.Port == 0 {
+					continue
+				}
+				if owner, exists := staticPortOwner[node.Port]; exists && owner != node.Name {
+					return nil, fmt.Errorf(
+						"cluster %s: duplicate static port %d for nodes %s and %s",
+						cl.Name, node.Port, owner, node.Name,
+					)
+				}
+				staticPortOwner[node.Port] = node.Name
+				// Reserve static ports from config so allocator never gives
+				// them to auto-assigned nodes on first generation.
+				existingPorts = append(existingPorts, node.Port)
 			}
 		}
 		ipAlloc, err := allocator.NewIPAllocator(cl.CIDR, existingAddrs)
@@ -192,6 +232,7 @@ func Generate(cfg *config.Config, existing []db.Cluster) (*GeneratedConfig, erro
 
 					// reuse or allocate
 					key := fmt.Sprintf("%s>%s", src.Name, dst.Name)
+					revKey := fmt.Sprintf("%s>%s", dst.Name, src.Name)
 					var (
 						ip1, ip2 net.IP
 						p1, p2   int
@@ -204,7 +245,23 @@ func Generate(cfg *config.Config, existing []db.Cluster) (*GeneratedConfig, erro
 						p2 = old.PeerPort
 						kp1 = &utils.KeyPair{Private: old.PrivKey, Public: old.PubKey}
 						kp2 = &utils.KeyPair{Private: "", Public: old.PeerPubKey}
+						if oldRev, okRev := tunnelMap[revKey]; okRev {
+							ip1 = net.ParseIP(oldRev.PeerIP)
+							ip2 = net.ParseIP(oldRev.InterfaceIP)
+							p1 = oldRev.PeerPort
+							p2 = oldRev.Port
+							kp2 = &utils.KeyPair{Private: oldRev.PrivKey, Public: oldRev.PubKey}
+							delete(tunnelMap, revKey)
+						}
 						delete(tunnelMap, key)
+					} else if oldRev, okRev := tunnelMap[revKey]; okRev {
+						ip1 = net.ParseIP(oldRev.PeerIP)
+						ip2 = net.ParseIP(oldRev.InterfaceIP)
+						p1 = oldRev.PeerPort
+						p2 = oldRev.Port
+						kp1 = &utils.KeyPair{Private: "", Public: oldRev.PeerPubKey}
+						kp2 = &utils.KeyPair{Private: oldRev.PrivKey, Public: oldRev.PubKey}
+						delete(tunnelMap, revKey)
 					} else {
 						ip1, ip2, err = ipAlloc.AllocatePair()
 						if err != nil {

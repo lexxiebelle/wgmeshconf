@@ -83,7 +83,7 @@ func TestGenerateConfigs_PTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// should be 2 files: x/tun_y.conf and y/tun_x.conf
+	// should be 2 files: ptp1/x/tun_y.conf and ptp1/y/tun_x.conf
 	if len(files) != 2 {
 		t.Fatalf("got %d files, want 2", len(files))
 	}
@@ -97,7 +97,7 @@ func TestGenerateConfigs_PTP(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		rel := tc.from + "/tun_" + tc.to + ".conf"
+		rel := "ptp1/" + tc.from + "/tun_" + tc.to + ".conf"
 		buf, ok := files[rel]
 		if !ok {
 			t.Errorf("missing %s", rel)

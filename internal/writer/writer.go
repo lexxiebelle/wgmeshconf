@@ -108,7 +108,7 @@ func GenerateConfigs(clusters []db.Cluster) (map[string][]byte, error) {
 					fmt.Fprintf(&buf, "PersistentKeepalive = %d\n", cl.PersistentKeepalive)
 				}
 				fmt.Fprintf(&buf, "\n")
-				rel := filepath.Join(from.Name, fmt.Sprintf("tun_%s.conf", to.Name))
+				rel := filepath.Join(cl.Name, from.Name, fmt.Sprintf("tun_%s.conf", to.Name))
 				files[rel] = buf.Bytes()
 			}
 		default:
